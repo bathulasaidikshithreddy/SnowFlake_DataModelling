@@ -1,0 +1,370 @@
+CREATE WAREHOUSE IF NOT EXISTS ENTERPRISE_WH
+WAREHOUSE_SIZE = 'XSMALL'
+AUTO_SUSPEND = 60
+AUTO_RESUME = TRUE;
+USE WAREHOUSE ENTERPRISE_WH;
+
+CREATE DATABASE IF NOT EXISTS ENTERPRISE_DB;
+USE DATABASE ENTERPRISE_DB;
+
+CREATE SCHEMA IF NOT EXISTS SALES_SCHEMA;
+USE SCHEMA SALES_SCHEMA;
+
+CREATE FILE FORMAT IF NOT EXISTS CSV_FORMAT
+TYPE = 'CSV'
+FIELD_DELIMITER = ','
+SKIP_HEADER = 1
+FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+DATE_FORMAT = 'YYYY-MM-DD'
+NULL_IF = ('NULL', 'null');
+
+CREATE STAGE IF NOT EXISTS SALES_STAGE
+FILE_FORMAT = CSV_FORMAT;
+
+CREATE OR REPLACE TABLE CUSTOMERS (
+    CUSTOMER_ID NUMBER,
+    CUSTOMER_NAME VARCHAR(100),
+    CITY VARCHAR(100),
+    MEMBERSHIP VARCHAR(50)
+);
+
+CREATE OR REPLACE TABLE PRODUCTS (
+    PRODUCT_ID NUMBER,
+    PRODUCT_NAME VARCHAR(100),
+    CATEGORY VARCHAR(100),
+    PRICE NUMBER(10,2)
+);
+
+CREATE OR REPLACE TABLE BRANCHES (
+    BRANCH_ID NUMBER,
+    BRANCH_NAME VARCHAR(100),
+    STATE VARCHAR(100)
+);
+
+CREATE OR REPLACE TABLE SALES (
+    SALE_ID NUMBER,
+    CUSTOMER_ID NUMBER,
+    PRODUCT_ID NUMBER,
+    BRANCH_ID NUMBER,
+    QUANTITY NUMBER,
+    SALE_DATE DATE,
+    TOTAL_AMOUNT NUMBER(12,2)
+);
+
+INSERT INTO CUSTOMERS VALUES
+(1,'Amit','Hyderabad','Gold'),
+(2,'Priya','Bangalore','Silver'),
+(3,'Rahul','Chennai','Gold'),
+(4,'Neha','Pune','Silver'),
+(5,'Arjun','Delhi','Platinum');
+
+INSERT INTO PRODUCTS VALUES
+(101,'Laptop','Electronics',60000),
+(102,'Mobile','Electronics',25000),
+(103,'Keyboard','Accessories',1500),
+(104,'Mouse','Accessories',800),
+(105,'Monitor','Electronics',12000);
+
+INSERT INTO BRANCHES VALUES
+(1,'Hyderabad Branch','Telangana'),
+(2,'Bangalore Branch','Karnataka'),
+(3,'Delhi Branch','Delhi');
+
+INSERT INTO SALES VALUES
+(1,1,101,1,1,'2026-07-01',60000),
+(2,2,102,2,2,'2026-07-02',50000),
+(3,3,103,2,2,'2026-07-03',3000),
+(4,4,104,1,5,'2026-07-04',4000),
+(5,5,105,3,2,'2026-07-05',24000);
+
+CREATE OR REPLACE TABLE NEW_SALES (
+    SALE_ID NUMBER,
+    CUSTOMER_ID NUMBER,
+    PRODUCT_ID NUMBER,
+    BRANCH_ID NUMBER,
+    QUANTITY NUMBER,
+    SALE_DATE DATE,
+    TOTAL_AMOUNT NUMBER(12,2)
+);
+
+CREATE OR REPLACE STREAM NEW_SALES_STREAM
+ON TABLE NEW_SALES;
+
+CREATE OR REPLACE STREAM NEW_SALES_STREAM
+ON TABLE NEW_SALES;
+
+INSERT INTO NEW_SALES VALUES
+(6,1,102,1,1,'2026-07-06',25000),
+(7,2,105,2,1,'2026-07-07',12000),
+(8,3,101,3,1,'2026-07-08',60000),
+(9,4,103,1,2,'2026-07-09',3000),
+(10,5,102,3,1,'2026-07-10',25000);
+
+SHOW STREAMS;
+SELECT COUNT(*)
+FROM NEW_SALES_STREAM;
+
+SELECT
+    SALE_ID,
+    CUSTOMER_ID,
+    PRODUCT_ID,
+    BRANCH_ID,
+    QUANTITY,
+    SALE_DATE,
+    TOTAL_AMOUNT,
+    METADATA$ACTION,
+    METADATA$ISUPDATE
+FROM NEW_SALES_STREAM
+ORDER BY SALE_ID;
+
+MERGE INTO SALES T
+USING (
+    SELECT
+        SALE_ID,
+        CUSTOMER_ID,
+        PRODUCT_ID,
+        BRANCH_ID,
+        QUANTITY,
+        SALE_DATE,
+        TOTAL_AMOUNT
+    FROM NEW_SALES_STREAM
+    WHERE METADATA$ACTION = 'INSERT'
+) S
+ON T.SALE_ID = S.SALE_ID
+
+WHEN NOT MATCHED THEN
+    INSERT (
+        SALE_ID,
+        CUSTOMER_ID,
+        PRODUCT_ID,
+        BRANCH_ID,
+        QUANTITY,
+        SALE_DATE,
+        TOTAL_AMOUNT
+    )
+    VALUES (
+        S.SALE_ID,
+        S.CUSTOMER_ID,
+        S.PRODUCT_ID,
+        S.BRANCH_ID,
+        S.QUANTITY,
+        S.SALE_DATE,
+        S.TOTAL_AMOUNT
+    );
+
+SELECT *
+FROM SALES
+ORDER BY SALE_ID;
+
+SELECT
+    SALE_ID,
+    COUNT(*) AS RECORD_COUNT
+FROM SALES
+GROUP BY SALE_ID
+HAVING COUNT(*) > 1;
+
+SELECT
+    S.SALE_ID,
+    S.CUSTOMER_ID
+FROM SALES S
+LEFT JOIN CUSTOMERS C
+    ON S.CUSTOMER_ID = C.CUSTOMER_ID
+WHERE C.CUSTOMER_ID IS NULL;
+
+SELECT COUNT(*) AS NEW_RECORD_COUNT
+FROM NEW_SALES;
+
+SELECT COUNT(*)
+FROM NEW_SALES_STREAM;
+
+DELETE FROM SALES
+WHERE SALE_ID = 10;
+
+SELECT *
+FROM SALES
+WHERE SALE_ID = 10;
+
+SELECT *
+FROM SALES
+AT (OFFSET => -60)
+WHERE SALE_ID = 10;
+
+INSERT INTO SALES
+SELECT *
+FROM SALES
+AT (OFFSET => -600)
+WHERE SALE_ID = 10;
+
+SELECT *
+FROM SALES
+WHERE SALE_ID = 10;
+
+CREATE OR REPLACE TABLE SALES_TEST
+CLONE SALES;
+
+SELECT *
+FROM SALES_TEST
+ORDER BY SALE_ID;
+
+SELECT COUNT(*) AS CLONE_RECORD_COUNT
+FROM SALES_TEST;
+
+INSERT INTO SALES_TEST VALUES
+(
+    11,1,103,1,1,'2026-07-11',1500
+);
+
+SELECT *
+FROM SALES_TEST
+ORDER BY SALE_ID;
+
+SELECT *
+FROM SALES
+WHERE SALE_ID = 11;
+
+CREATE OR REPLACE TASK DAILY_SALES_TASK
+WAREHOUSE = ENTERPRISE_WH
+SCHEDULE = 'USING CRON 0 1 * * * UTC'
+AS
+MERGE INTO SALES T
+USING NEW_SALES S
+ON T.SALE_ID = S.SALE_ID
+
+WHEN NOT MATCHED THEN
+INSERT (
+    SALE_ID,
+    CUSTOMER_ID,
+    PRODUCT_ID,
+    BRANCH_ID,
+    QUANTITY,
+    SALE_DATE,
+    TOTAL_AMOUNT
+)
+VALUES (
+    S.SALE_ID,
+    S.CUSTOMER_ID,
+    S.PRODUCT_ID,
+    S.BRANCH_ID,
+    S.QUANTITY,
+    S.SALE_DATE,
+    S.TOTAL_AMOUNT
+);
+
+ALTER TASK DAILY_SALES_TASK RESUME;
+SHOW TASKS;
+
+SELECT *
+FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY())
+ORDER BY SCHEDULED_TIME DESC;
+
+SELECT
+    C.CUSTOMER_ID,
+    C.CUSTOMER_NAME,
+    SUM(S.TOTAL_AMOUNT) AS TOTAL_REVENUE
+FROM SALES S
+JOIN CUSTOMERS C
+    ON S.CUSTOMER_ID = C.CUSTOMER_ID
+GROUP BY
+    C.CUSTOMER_ID,
+    C.CUSTOMER_NAME
+ORDER BY TOTAL_REVENUE DESC;
+
+SELECT
+    B.BRANCH_ID,
+    B.BRANCH_NAME,
+    SUM(S.TOTAL_AMOUNT) AS TOTAL_REVENUE
+FROM SALES S
+JOIN BRANCHES B
+    ON S.BRANCH_ID = B.BRANCH_ID
+GROUP BY
+    B.BRANCH_ID,
+    B.BRANCH_NAME
+ORDER BY TOTAL_REVENUE DESC;
+
+SELECT
+    P.PRODUCT_ID,
+    P.PRODUCT_NAME,
+    SUM(S.TOTAL_AMOUNT) AS TOTAL_REVENUE
+FROM SALES S
+JOIN PRODUCTS P
+    ON S.PRODUCT_ID = P.PRODUCT_ID
+GROUP BY
+    P.PRODUCT_ID,
+    P.PRODUCT_NAME
+ORDER BY TOTAL_REVENUE DESC;
+
+select date_trunc('Month',s.sale_date) as month,SUM(S.TOTAL_AMOUNT) AS TOTAL_REVENUE
+from sales s
+group by date_trunc('Month',s.sale_date)
+order by month;
+
+select c.customer_name,sum(s.total_amount) as Revenue
+from customers c
+join sales s
+on c.customer_id=s.customer_id
+group by c.customer_name,c.customer_id
+order by Revenue desc
+limit 1;
+
+select b.branch_name,sum(s.total_amount) as Revenue
+from branches b 
+join sales s
+on b.branch_id = s.branch_id
+group by b.branch_id,b.branch_name
+order by Revenue desc
+limit 1;
+
+select p.product_name,sum(s.total_amount) as Revenue
+from Sales s
+join products p
+on p.product_id=s.product_id
+group by p.product_id,p.product_name
+order by Revenue desc
+limit 5;
+
+select c.customer_name,count(c.customer_id) as Frequency
+from sales s
+join customers c
+on s.customer_id=c.customer_id
+group by c.customer_name
+order by Frequency desc;
+
+select sale_date,total_amount,sum(total_amount) over (order by sale_id,sale_date) as RunningRevenue
+from sales 
+order by sale_id,sale_date;
+
+WITH customer_total AS (
+    SELECT
+        c.customer_id,
+        c.customer_name,
+        SUM(s.total_amount) AS revenue
+    FROM sales s
+    JOIN customers c
+        ON c.customer_id = s.customer_id
+    GROUP BY
+        c.customer_id,
+        c.customer_name
+)
+SELECT
+    customer_id,
+    customer_name,
+    revenue,
+    RANK() OVER (ORDER BY revenue DESC) AS customer_rank
+FROM customer_total
+ORDER BY customer_rank;
+
+CREATE OR REPLACE VIEW CUSTOMER_REVENUE AS
+SELECT
+    C.CUSTOMER_ID,
+    C.CUSTOMER_NAME,
+    SUM(S.TOTAL_AMOUNT) AS TOTAL_REVENUE
+FROM SALES S
+JOIN CUSTOMERS C
+    ON S.CUSTOMER_ID = C.CUSTOMER_ID
+GROUP BY
+    C.CUSTOMER_ID,
+    C.CUSTOMER_NAME;
+
+SELECT *
+FROM CUSTOMER_REVENUE
+ORDER BY TOTAL_REVENUE DESC;
